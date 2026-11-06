@@ -4,7 +4,9 @@ using System.Text.Json.Serialization;
 
 namespace AocInputSwitch;
 
-internal sealed record InputSlot(string Id, string Label, uint Vcp, HotkeyChord Hotkey);
+internal sealed record InputSlot(string Id, string Label, uint Vcp, HotkeyChord Hotkey, bool Available = true);
+
+internal readonly record struct LiveInputs(uint? Current, IReadOnlyList<uint> Reported, bool CapsKnown);
 
 internal sealed class InputConfig
 {

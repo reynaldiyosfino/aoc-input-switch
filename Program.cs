@@ -70,13 +70,20 @@ internal static class Program
                 log.AppendLine(code is uint current
                     ? $"Active input: 0x{current:X2} ({MonitorSession.Describe(current)})"
                     : "Active input: failed. " + readError);
-                var caps = session.CapabilityInputCodes;
+                var live = session.ReadLiveInputs();
+                var caps = live.Reported.Count > 0 ? live.Reported : session.CapabilityInputCodes;
                 log.AppendLine(caps.Count == 0
                     ? "Capabilities 0x60: (unread, using standard codes)"
                     : "Capabilities 0x60: " + string.Join(" ", caps.Select(item => item.ToString("X2"))));
+                log.AppendLine(live.CapsKnown
+                    ? "Live inputs: " + string.Join(" ", live.Reported.Select(item => item.ToString("X2")))
+                    : "Live inputs: unknown (monitor did not list a subset)");
                 var slots = config.Resolve(caps, out var warning);
                 foreach (var slot in slots)
-                    log.AppendLine($"{slot.Label} = 0x{slot.Vcp:X2}  {slot.Hotkey.Format()}");
+                {
+                    var available = !live.CapsKnown || live.Reported.Contains(slot.Vcp) || live.Current == slot.Vcp;
+                    log.AppendLine($"{slot.Label} = 0x{slot.Vcp:X2}  {slot.Hotkey.Format()}  {(available ? "available" : "unplugged")}");
+                }
                 if (warning is not null)
                     log.AppendLine(warning);
 

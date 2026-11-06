@@ -82,11 +82,11 @@ internal sealed class SwitchForm : Form
         {
             if (i >= slots.Count)
             {
-                _buttons[i].Bind(null, false);
+                _buttons[i].Bind(null, false, false);
                 continue;
             }
 
-            _buttons[i].Bind(slots[i], current == slots[i].Vcp);
+            _buttons[i].Bind(slots[i], current == slots[i].Vcp, slots[i].Available);
         }
     }
 
@@ -124,6 +124,7 @@ internal sealed class SlotButton : Panel
     private readonly Label _name;
     private readonly Label _hotkey;
     private bool _active;
+    private bool _available = true;
 
     public SlotButton()
     {
@@ -167,28 +168,47 @@ internal sealed class SlotButton : Panel
 
     public event EventHandler? Activated;
 
-    public void Bind(InputSlot? slot, bool active)
+    public void Bind(InputSlot? slot, bool active, bool available)
     {
         _active = active;
+        _available = available && slot is not null;
         _name.Text = slot?.Label ?? "";
         _hotkey.Text = slot?.Hotkey.Format() ?? "";
-        Enabled = slot is not null;
+        var cursor = _available ? Cursors.Hand : Cursors.Default;
+        Cursor = cursor;
+        foreach (Control child in Controls)
+            SetCursor(child, cursor);
         ApplyColors();
     }
 
     private void Wire(Control control)
     {
-        control.Click += (_, _) => Activated?.Invoke(this, EventArgs.Empty);
+        control.Click += (_, _) =>
+        {
+            if (_available)
+                Activated?.Invoke(this, EventArgs.Empty);
+        };
         foreach (Control child in control.Controls)
             Wire(child);
     }
 
     private void ApplyColors()
     {
-        var back = _active ? Theme.Active : Theme.Card;
+        var back = !_available ? Theme.Disabled : _active ? Theme.Active : Theme.Card;
+        var text = _available ? Theme.Text : Theme.DisabledText;
+        var muted = _available ? Theme.Muted : Theme.DisabledText;
         BackColor = back;
+        _name.ForeColor = text;
+        _hotkey.ForeColor = muted;
         foreach (Control child in Controls)
             PaintTree(child, back);
+    }
+
+    private static void SetCursor(Control control, Cursor cursor)
+    {
+        control.Cursor = cursor;
+        foreach (Control child in control.Controls)
+            SetCursor(child, cursor);
     }
 
     private static void PaintTree(Control control, Color back)

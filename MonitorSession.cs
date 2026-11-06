@@ -47,6 +47,36 @@ internal sealed class MonitorSession : IDisposable
     public string Capabilities => _capabilities;
     public IReadOnlyList<uint> CapabilityInputCodes => _codes;
 
+    public LiveInputs ReadLiveInputs()
+    {
+        lock (Gate)
+        {
+            uint? current = null;
+            if (TryRead(out var code, out _))
+                current = code;
+
+            IReadOnlyList<uint> reported = _codes;
+            var capsKnown = false;
+            if (NvidiaDdc.TryGetCapabilities(_adapter, out var text, out _) && text.Length > 0)
+            {
+                _capabilities = text;
+                _codes = ParseInputCodes(text);
+                reported = _codes;
+                capsKnown = _codes.Count > 0;
+            }
+            else if (_codes.Count == 0)
+            {
+                LoadCapabilities();
+                reported = _codes;
+                capsKnown = _codes.Count > 0;
+            }
+            else
+                capsKnown = _codes.Count > 0;
+
+            return new LiveInputs(current, reported, capsKnown);
+        }
+    }
+
     public static bool TryOpen(out MonitorSession? session, out string report, out string error)
     {
         lock (Gate)
@@ -365,7 +395,7 @@ internal sealed class MonitorSession : IDisposable
                blob.Contains(@"MONITOR\AOC", StringComparison.Ordinal);
     }
 
-    private static IReadOnlyList<uint> ParseInputCodes(string capabilities)
+    internal static IReadOnlyList<uint> ParseInputCodes(string capabilities)
     {
         var match = InputCodePattern.Match(capabilities);
         if (!match.Success)

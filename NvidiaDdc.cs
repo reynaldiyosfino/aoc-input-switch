@@ -74,7 +74,38 @@ internal static class NvidiaDdc
                 lines.AppendLine();
             }
 
+            if (TryGetCapabilities(adapter, out var caps, out var capsError))
+            {
+                lines.AppendLine("Capabilities: " + TrimCaps(caps));
+                var codes = MonitorSession.ParseInputCodes(caps);
+                lines.AppendLine(codes.Count == 0
+                    ? "Live 0x60: (none in capabilities)"
+                    : "Live 0x60: " + string.Join(" ", codes.Select(item => item.ToString("X2"))));
+            }
+            else
+                lines.AppendLine("Capabilities failed: " + capsError);
+
             return lines.Length == 0 ? "NVAPI did not see a display." : lines.ToString().TrimEnd();
+        }
+    }
+
+    public static bool TryGetCapabilities(string adapter, out string capabilities, out string error)
+    {
+        lock (Gate)
+        {
+            capabilities = "";
+            if (!EnsureReady(out error))
+                return false;
+
+            foreach (var display in ListDisplays())
+            {
+                if (!NamesMatch(display.Name, adapter))
+                    continue;
+                return TryReadCapabilities(display, out capabilities, out error);
+            }
+
+            error = "NVIDIA display for the AOC was not found.";
+            return false;
         }
     }
 
@@ -208,6 +239,84 @@ internal static class NvidiaDdc
         }
 
         return list;
+    }
+
+    private static bool TryReadCapabilities(NvDisplay display, out string capabilities, out string error)
+    {
+        capabilities = "";
+        var text = new StringBuilder();
+        var offset = 0;
+        for (var chunk = 0; chunk < 32; chunk++)
+        {
+            byte[] request = [0x83, 0xF3, (byte)((offset >> 8) & 0xFF), (byte)(offset & 0xFF), 0];
+            if (!TryI2c(display, write: true, request, out error))
+                return false;
+
+            Thread.Sleep(50);
+            var reply = new byte[40];
+            if (!TryI2c(display, write: false, reply, out error))
+                return false;
+
+            if (!TryParseCapabilitiesFragment(reply, out var fragment, out var fragmentError))
+            {
+                error = fragmentError;
+                return text.Length > 0;
+            }
+
+            if (fragment.Length == 0)
+                break;
+
+            text.Append(fragment);
+            offset += fragment.Length;
+            if (fragment.Length < 8)
+                break;
+        }
+
+        capabilities = text.ToString();
+        error = capabilities.Length == 0 ? "Empty capabilities string." : "";
+        return capabilities.Length > 0;
+    }
+
+    private static bool TryParseCapabilitiesFragment(byte[] reply, out string fragment, out string error)
+    {
+        fragment = "";
+        error = "";
+        var start = 0;
+        if (reply.Length > 0 && reply[0] == 0x6E)
+            start = 1;
+        if (start + 4 >= reply.Length)
+        {
+            error = "Capabilities reply was too short.";
+            return false;
+        }
+
+        var length = reply[start] & 0x7F;
+        if (length < 3)
+            return true;
+
+        var dataLength = Math.Min(length - 3, reply.Length - start - 4);
+        if (dataLength <= 0)
+            return true;
+
+        var chars = new char[dataLength];
+        var count = 0;
+        for (var i = 0; i < dataLength; i++)
+        {
+            var value = reply[start + 4 + i];
+            if (value is 0)
+                break;
+            if (value is >= 32 and <= 126)
+                chars[count++] = (char)value;
+        }
+
+        fragment = new string(chars, 0, count);
+        return true;
+    }
+
+    private static string TrimCaps(string caps)
+    {
+        var text = caps.Replace("\r", " ").Replace("\n", " ");
+        return text.Length <= 240 ? text : text[..240] + "...";
     }
 
     private static bool TrySetVcp(NvDisplay display, byte feature, uint value, out string error)

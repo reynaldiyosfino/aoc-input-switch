@@ -60,6 +60,8 @@ internal sealed class TrayApplication : ApplicationContext
 
     public void RequestSwitch(InputSlot slot)
     {
+        if (!slot.Available)
+            return;
         if (Interlocked.Exchange(ref _busy, 1) == 1)
             return;
 
@@ -129,10 +131,11 @@ internal sealed class TrayApplication : ApplicationContext
             if (!HotkeyForm.TryEdit(owner, _slots, out var chords))
                 return;
             _config.UpdateHotkeys(chords);
-            _slots = _config.Resolve(_monitor?.CapabilityInputCodes ?? [], out var warning);
+            _slots = ApplyAvailability(_config.Resolve(_monitor?.CapabilityInputCodes ?? [], out var warning), _current, null, capsKnown: false);
             if (warning is not null)
                 ShowToast(warning, error: true);
             _switchForm?.RefreshSlots();
+            RefreshCurrent();
         }
         finally
         {
@@ -177,7 +180,10 @@ internal sealed class TrayApplication : ApplicationContext
         var index = id - 1;
         if (index < 0 || index >= _slots.Count)
             return;
-        RequestSwitch(_slots[index]);
+        var slot = _slots[index];
+        if (!slot.Available)
+            return;
+        RequestSwitch(slot);
     }
 
     private void RefreshCurrent()
@@ -185,12 +191,16 @@ internal sealed class TrayApplication : ApplicationContext
         var generation = _generation;
         Task.Run(() =>
         {
-            var code = _monitor?.ReadInputCode(out _);
+            var live = _monitor?.ReadLiveInputs();
             _invoker.BeginInvoke(() =>
             {
                 if (generation != _generation)
                     return;
-                _current = code;
+                _current = live?.Current;
+                var previous = _slots.Select(slot => slot.Available).ToArray();
+                _slots = ApplyAvailability(_slots, _current, live?.Reported, live?.CapsKnown == true);
+                if (!previous.SequenceEqual(_slots.Select(slot => slot.Available)))
+                    ApplyHotkeys();
                 UpdateVisuals();
             });
         });
@@ -223,6 +233,7 @@ internal sealed class TrayApplication : ApplicationContext
             var item = new ToolStripMenuItem(slot.Label)
             {
                 Checked = _current == slot.Vcp,
+                Enabled = slot.Available,
                 ShortcutKeyDisplayString = slot.Hotkey.Format(),
             };
             var chosen = slot;
@@ -259,7 +270,7 @@ internal sealed class TrayApplication : ApplicationContext
         for (var i = 0; i < _slots.Count; i++)
         {
             var slot = _slots[i];
-            if (!seen.Add(slot.Hotkey))
+            if (!slot.Available || !seen.Add(slot.Hotkey))
                 continue;
             if (!_hotkeys.Register(i + 1, slot.Hotkey))
                 ShowToast($"Hotkey for {slot.Label} is already in use: {slot.Hotkey.Format()}", error: true);
@@ -313,6 +324,21 @@ internal sealed class TrayApplication : ApplicationContext
         if (_switchForm is { IsDisposed: false })
             _switchForm.Close();
         ExitThread();
+    }
+
+    private static IReadOnlyList<InputSlot> ApplyAvailability(
+        IReadOnlyList<InputSlot> slots,
+        uint? current,
+        IReadOnlyList<uint>? reported,
+        bool capsKnown)
+    {
+        if (!capsKnown || reported is null || reported.Count == 0)
+            return slots.Select(slot => slot with { Available = true }).ToList();
+
+        var live = reported.ToHashSet();
+        if (current is uint code)
+            live.Add(code);
+        return slots.Select(slot => slot with { Available = live.Contains(slot.Vcp) }).ToList();
     }
 
     private static void WriteRunKey(bool enabled)
