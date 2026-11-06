@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <RootNamespace>AocInputSwitch</RootNamespace>
+    <AssemblyName>AocInputSwitch</AssemblyName>
+    <Product>AOC Input</Product>
+    <AssemblyTitle>AOC Input</AssemblyTitle>
+    <Version>1.0.0</Version>
+    <Description>Ganti input AOC U34G3G3R3 lewat DDC/CI.</Description>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+</Project>

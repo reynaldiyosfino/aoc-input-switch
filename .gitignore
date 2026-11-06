@@ -1,0 +1,8 @@
+bin/
+obj/
+publish/
+last-run.txt
+appsettings.json
+*.user
+*.suo
+.vs/
