@@ -35,6 +35,8 @@ internal sealed class AppConfig
     ];
 
     public bool StartWithWindows { get; set; }
+    public bool ShowedUnpluggedHint { get; set; }
+    public List<string> UnpluggedIds { get; set; } = [];
     public List<InputConfig> Inputs { get; set; } = [];
 
     public static string SettingsPath => Path.Combine(AppContext.BaseDirectory, "appsettings.json");
@@ -102,7 +104,16 @@ internal sealed class AppConfig
         }
 
         warning = warnings.Count == 0 ? null : string.Join(" ", warnings);
-        return slots;
+        var dead = UnpluggedIds.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return slots.Select(slot => slot with { Available = !dead.Contains(slot.Id) }).ToList();
+    }
+
+    public void SetUnplugged(string id, bool unplugged)
+    {
+        UnpluggedIds.RemoveAll(item => item.Equals(id, StringComparison.OrdinalIgnoreCase));
+        if (unplugged)
+            UnpluggedIds.Add(id);
+        Save();
     }
 
     public void UpdateHotkeys(IReadOnlyList<HotkeyChord> chords)

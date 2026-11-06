@@ -55,6 +55,12 @@ internal sealed class SwitchForm : Form
                 if (index < slots.Count)
                     _app.RequestSwitch(slots[index]);
             };
+            button.ToggleCable += (_, _) =>
+            {
+                var slots = _app.Slots;
+                if (index < slots.Count)
+                    _app.ToggleUnplugged(slots[index]);
+            };
             _buttons[i] = button;
             grid.Controls.Add(button, i % 2, i / 2);
         }
@@ -167,6 +173,7 @@ internal sealed class SlotButton : Panel
     }
 
     public event EventHandler? Activated;
+    public event EventHandler? ToggleCable;
 
     public void Bind(InputSlot? slot, bool active, bool available)
     {
@@ -183,9 +190,15 @@ internal sealed class SlotButton : Panel
 
     private void Wire(Control control)
     {
-        control.Click += (_, _) =>
+        control.MouseUp += (_, e) =>
         {
-            if (_available)
+            if (e.Button == MouseButtons.Right)
+            {
+                ToggleCable?.Invoke(this, EventArgs.Empty);
+                return;
+            }
+
+            if (e.Button == MouseButtons.Left && _available)
                 Activated?.Invoke(this, EventArgs.Empty);
         };
         foreach (Control child in control.Controls)

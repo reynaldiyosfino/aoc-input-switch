@@ -52,6 +52,12 @@ internal sealed class TrayApplication : ApplicationContext
         Application.Idle += OnFirstIdle;
         if (warning is not null)
             ShowToast(warning, error: true);
+        if (!_config.ShowedUnpluggedHint)
+        {
+            _config.ShowedUnpluggedHint = true;
+            _config.Save();
+            ShowToast("Right-click a port with no cable to dim it.", error: false);
+        }
     }
 
     public bool IsExiting { get; private set; }
@@ -92,9 +98,15 @@ internal sealed class TrayApplication : ApplicationContext
                     }
                     else if (_monitor.TrySetInput(slot.Vcp, out var error))
                     {
-                        ok = true;
-                        read = _monitor.ReadInputCode(out _) ?? slot.Vcp;
-                        message = slot.Label;
+                        Thread.Sleep(900);
+                        read = _monitor.ReadInputCode(out _);
+                        if (read == slot.Vcp)
+                        {
+                            ok = true;
+                            message = slot.Label;
+                        }
+                        else
+                            message = slot.Label + " has no signal.";
                     }
                     else
                     {
@@ -115,7 +127,12 @@ internal sealed class TrayApplication : ApplicationContext
                 if (generation != _generation)
                     return;
                 if (ok)
+                {
                     _current = read ?? slot.Vcp;
+                    MarkUnplugged(slot.Id, unplugged: false);
+                }
+                else if (message.EndsWith("has no signal.", StringComparison.Ordinal))
+                    MarkUnplugged(slot.Id, unplugged: true);
                 ShowToast(already ? message : (ok ? NameFor(_current) : message), error: !ok);
                 UpdateVisuals();
             });
@@ -242,6 +259,20 @@ internal sealed class TrayApplication : ApplicationContext
         }
 
         menu.Items.Add(new ToolStripSeparator());
+        foreach (var slot in _slots)
+        {
+            if (slot.Vcp == _current)
+                continue;
+            var chosen = slot;
+            var mark = new ToolStripMenuItem(slot.Available ? "Dim " + slot.Label + " (no cable)" : "Enable " + slot.Label)
+            {
+                Enabled = true,
+            };
+            mark.Click += (_, _) => ToggleUnplugged(chosen);
+            menu.Items.Add(mark);
+        }
+
+        menu.Items.Add(new ToolStripSeparator());
         var open = new ToolStripMenuItem("Open window");
         open.Click += (_, _) => ShowSwitcher();
         menu.Items.Add(open);
@@ -326,19 +357,43 @@ internal sealed class TrayApplication : ApplicationContext
         ExitThread();
     }
 
-    private static IReadOnlyList<InputSlot> ApplyAvailability(
+    public void ToggleUnplugged(InputSlot slot)
+    {
+        if (slot.Vcp == _current)
+            return;
+        MarkUnplugged(slot.Id, slot.Available);
+    }
+
+    private void MarkUnplugged(string id, bool unplugged)
+    {
+        if (unplugged && _slots.Any(slot => slot.Id == id && slot.Vcp == _current))
+            unplugged = false;
+        _config.SetUnplugged(id, unplugged);
+        _slots = ApplyAvailability(_slots, _current, null, capsKnown: false);
+        ApplyHotkeys();
+        UpdateVisuals();
+    }
+
+    private IReadOnlyList<InputSlot> ApplyAvailability(
         IReadOnlyList<InputSlot> slots,
         uint? current,
         IReadOnlyList<uint>? reported,
         bool capsKnown)
     {
-        if (!capsKnown || reported is null || reported.Count == 0)
-            return slots.Select(slot => slot with { Available = true }).ToList();
-
-        var live = reported.ToHashSet();
+        var dead = _config.UnpluggedIds.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var liveCaps = capsKnown && reported is { Count: > 0 } && reported.Count < slots.Count
+            ? reported.ToHashSet()
+            : null;
         if (current is uint code)
-            live.Add(code);
-        return slots.Select(slot => slot with { Available = live.Contains(slot.Vcp) }).ToList();
+            liveCaps?.Add(code);
+
+        return slots.Select(slot =>
+        {
+            var available = !dead.Contains(slot.Id) || slot.Vcp == current;
+            if (liveCaps is not null)
+                available = available && (liveCaps.Contains(slot.Vcp) || slot.Vcp == current);
+            return slot with { Available = available };
+        }).ToList();
     }
 
     private static void WriteRunKey(bool enabled)
