@@ -63,7 +63,7 @@ internal sealed class TrayApplication : ApplicationContext
     public bool IsExiting { get; private set; }
     public IReadOnlyList<InputSlot> Slots => _slots;
     public uint? CurrentCode => _current;
-    public string Brand => string.IsNullOrWhiteSpace(_monitor?.Brand) ? "Monitor" : _monitor!.Brand;
+    public string DisplayTitle => string.IsNullOrWhiteSpace(_monitor?.Title) ? "Monitor" : _monitor!.Title;
 
     public void RequestSwitch(InputSlot slot)
     {
@@ -140,14 +140,15 @@ internal sealed class TrayApplication : ApplicationContext
         });
     }
 
-    public void BeginHotkeyEdit()
+    public void BeginInputEdit()
     {
         UnregisterHotkeys();
         try
         {
             var owner = EnsureSwitcherHiddenOwner();
-            if (!HotkeyForm.TryEdit(owner, _slots, out var chords))
+            if (!InputsForm.TryEdit(owner, _slots, out var labels, out var chords))
                 return;
+            _config.UpdateLabels(labels);
             _config.UpdateHotkeys(chords);
             ReloadSlots();
         }
@@ -155,16 +156,6 @@ internal sealed class TrayApplication : ApplicationContext
         {
             ApplyHotkeys();
         }
-    }
-
-    public void BeginRename()
-    {
-        var owner = EnsureSwitcherHiddenOwner();
-        if (!RenameForm.TryEdit(owner, _slots, out var labels))
-            return;
-        _config.UpdateLabels(labels);
-        ReloadSlots();
-        ApplyHotkeys();
     }
 
     public void ToggleStartup()
@@ -238,8 +229,10 @@ internal sealed class TrayApplication : ApplicationContext
         if (_switchForm is null || _switchForm.IsDisposed)
             _switchForm = new SwitchForm(this);
         _switchForm.RefreshSlots();
+        _switchForm.ShowInTaskbar = true;
         if (!_switchForm.Visible)
             _switchForm.Show();
+        _switchForm.WindowState = FormWindowState.Normal;
         _switchForm.Activate();
     }
 
@@ -287,13 +280,9 @@ internal sealed class TrayApplication : ApplicationContext
         open.Click += (_, _) => ShowSwitcher();
         menu.Items.Add(open);
 
-        var edit = new ToolStripMenuItem("Set hotkeys");
-        edit.Click += (_, _) => BeginHotkeyEdit();
+        var edit = new ToolStripMenuItem("Inputs");
+        edit.Click += (_, _) => BeginInputEdit();
         menu.Items.Add(edit);
-
-        var rename = new ToolStripMenuItem("Rename inputs");
-        rename.Click += (_, _) => BeginRename();
-        menu.Items.Add(rename);
 
         var startup = new ToolStripMenuItem("Run at Windows startup")
         {
@@ -346,7 +335,7 @@ internal sealed class TrayApplication : ApplicationContext
         var name = NameFor(_current);
         var tip = "AOC Input: " + name;
         _notify.Text = tip.Length <= 63 ? tip : tip[..63];
-        if (_switchForm is { Visible: true })
+        if (_switchForm is { IsDisposed: false })
             _switchForm.RefreshSlots();
     }
 

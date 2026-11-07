@@ -1,23 +1,25 @@
 namespace AocInputSwitch;
 
-internal sealed class HotkeyForm : Form
+internal sealed class InputsForm : Form
 {
     private readonly HotkeyChord[] _chords;
+    private readonly TextBox[] _boxes;
     private readonly Label[] _values;
     private readonly Label _error;
     private int _captureIndex = -1;
 
-    private HotkeyForm(IReadOnlyList<InputSlot> slots)
+    private InputsForm(IReadOnlyList<InputSlot> slots)
     {
         _chords = slots.Select(slot => slot.Hotkey).ToArray();
+        _boxes = new TextBox[slots.Count];
         _values = new Label[slots.Count];
 
-        Text = "Set hotkeys";
+        Text = "Inputs";
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
         MinimizeBox = false;
         StartPosition = FormStartPosition.CenterScreen;
-        ClientSize = new Size(460, 280);
+        ClientSize = new Size(620, 80 + (slots.Count * 44));
         BackColor = Theme.Back;
         ForeColor = Theme.Text;
         Font = Theme.Body;
@@ -27,14 +29,15 @@ internal sealed class HotkeyForm : Form
         var grid = new TableLayoutPanel
         {
             Dock = DockStyle.Top,
-            Height = 180,
-            ColumnCount = 3,
+            Height = slots.Count * 44,
+            ColumnCount = 4,
             RowCount = slots.Count,
             Padding = new Padding(12, 12, 12, 0),
             BackColor = Theme.Back,
         };
-        grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 90));
-        grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 80));
+        grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 45));
+        grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 55));
         grid.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 110));
 
         for (var i = 0; i < slots.Count; i++)
@@ -42,13 +45,26 @@ internal sealed class HotkeyForm : Form
             grid.RowStyles.Add(new RowStyle(SizeType.Percent, 100f / slots.Count));
             grid.Controls.Add(new Label
             {
-                Text = slots[i].Label,
+                Text = MonitorSession.Describe(slots[i].Vcp),
                 Dock = DockStyle.Fill,
                 TextAlign = ContentAlignment.MiddleLeft,
-                ForeColor = Theme.Text,
+                ForeColor = Theme.Muted,
                 BackColor = Theme.Back,
                 Font = Theme.Body,
             }, 0, i);
+
+            var box = new TextBox
+            {
+                Text = slots[i].Label,
+                Dock = DockStyle.Fill,
+                BorderStyle = BorderStyle.FixedSingle,
+                BackColor = Theme.Card,
+                ForeColor = Theme.Text,
+                Font = Theme.Body,
+                Margin = new Padding(0, 8, 8, 8),
+            };
+            _boxes[i] = box;
+            grid.Controls.Add(box, 1, i);
 
             var value = new Label
             {
@@ -60,7 +76,7 @@ internal sealed class HotkeyForm : Form
                 Font = Theme.Body,
             };
             _values[i] = value;
-            grid.Controls.Add(value, 1, i);
+            grid.Controls.Add(value, 2, i);
 
             var index = i;
             var change = new Button
@@ -74,7 +90,7 @@ internal sealed class HotkeyForm : Form
             };
             change.FlatAppearance.BorderSize = 0;
             change.Click += (_, _) => BeginCapture(index);
-            grid.Controls.Add(change, 2, i);
+            grid.Controls.Add(change, 3, i);
         }
 
         _error = new Label
@@ -124,19 +140,27 @@ internal sealed class HotkeyForm : Form
         Controls.Add(_error);
         Controls.Add(grid);
         CancelButton = cancel;
+        AcceptButton = save;
     }
 
     public IReadOnlyList<HotkeyChord> Chords => _chords;
+    public IReadOnlyList<string> Labels => _boxes.Select(box => box.Text).ToList();
 
-    public static bool TryEdit(IWin32Window owner, IReadOnlyList<InputSlot> slots, out IReadOnlyList<HotkeyChord> chords)
+    public static bool TryEdit(
+        IWin32Window owner,
+        IReadOnlyList<InputSlot> slots,
+        out IReadOnlyList<string> labels,
+        out IReadOnlyList<HotkeyChord> chords)
     {
-        using var form = new HotkeyForm(slots);
+        using var form = new InputsForm(slots);
         if (form.ShowDialog(owner) != DialogResult.OK)
         {
+            labels = [];
             chords = [];
             return false;
         }
 
+        labels = form.Labels;
         chords = form.Chords;
         return true;
     }

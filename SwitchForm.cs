@@ -11,10 +11,11 @@ internal sealed class SwitchForm : Form
     public SwitchForm(TrayApplication app)
     {
         _app = app;
-        Text = app.Brand;
+        Text = app.DisplayTitle;
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
         MinimizeBox = true;
+        ShowInTaskbar = true;
         StartPosition = FormStartPosition.Manual;
         ClientSize = new Size(520, 340);
         BackColor = Theme.Back;
@@ -24,7 +25,7 @@ internal sealed class SwitchForm : Form
 
         _title = new Label
         {
-            Text = app.Brand,
+            Text = app.DisplayTitle,
             Dock = DockStyle.Fill,
             TextAlign = ContentAlignment.MiddleCenter,
             Font = Theme.Title,
@@ -55,16 +56,16 @@ internal sealed class SwitchForm : Form
         RebuildGrid(Math.Max(1, app.Slots.Count));
     }
 
-    public void SetBrand(string brand)
+    public void SetTitle(string title)
     {
-        var text = string.IsNullOrWhiteSpace(brand) ? "Monitor" : brand;
+        var text = string.IsNullOrWhiteSpace(title) ? "Monitor" : title;
         _title.Text = text;
         Text = text;
     }
 
     public void RefreshSlots()
     {
-        SetBrand(_app.Brand);
+        SetTitle(_app.DisplayTitle);
         var slots = _app.Slots;
         if (slots.Count != _layoutCount)
             RebuildGrid(Math.Max(1, slots.Count));
@@ -129,12 +130,11 @@ internal sealed class SwitchForm : Form
         _grid.ResumeLayout();
     }
 
-    protected override void OnVisibleChanged(EventArgs e)
+    protected override void OnShown(EventArgs e)
     {
-        ShowInTaskbar = Visible;
-        if (Visible)
-            PlaceOnCurrentScreen();
-        base.OnVisibleChanged(e);
+        ShowInTaskbar = true;
+        PlaceOnCurrentScreen();
+        base.OnShown(e);
     }
 
     protected override void OnFormClosing(FormClosingEventArgs e)
@@ -142,7 +142,8 @@ internal sealed class SwitchForm : Form
         if (e.CloseReason == CloseReason.UserClosing && !_app.IsExiting)
         {
             e.Cancel = true;
-            Hide();
+            ShowInTaskbar = true;
+            WindowState = FormWindowState.Minimized;
             return;
         }
 

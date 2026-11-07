@@ -62,6 +62,8 @@ internal static class Program
                 log.AppendLine(report);
                 log.AppendLine("Monitor: " + session.Description);
                 log.AppendLine("Brand: " + session.Brand);
+                log.AppendLine("Model: " + session.Model);
+                log.AppendLine("Title: " + session.Title);
                 log.AppendLine("Adapter: " + session.Adapter);
                 log.AppendLine("Device: " + session.DeviceId);
                 var code = session.ReadInputCode(out var readError);

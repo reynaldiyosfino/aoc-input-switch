@@ -14,6 +14,7 @@ internal sealed class FoundMonitor
     public string DeviceString { get; set; } = "";
     public string Description { get; set; } = "";
     public string Brand { get; set; } = "Monitor";
+    public string Model { get; set; } = "";
     public bool IsAoc { get; set; }
 }
 
@@ -24,6 +25,9 @@ internal sealed class MonitorSession : IDisposable
     private static readonly Regex InputCodePattern = new(
         @"(?:^|[^0-9A-Fa-f])60\s*\(\s*([0-9A-Fa-f\s]+)\)",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+    private static readonly Regex DdcModelPattern = new(
+        @"model\s*\(\s*([^)]+?)\s*\)",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
 
     private IntPtr _handle;
     private bool _hasHandle;
@@ -31,6 +35,7 @@ internal sealed class MonitorSession : IDisposable
     private string _description = "";
     private string _adapter = "";
     private string _brand = "Monitor";
+    private string _model = "";
     private string _capabilities = "";
     private IReadOnlyList<uint> _codes = [];
 
@@ -42,12 +47,15 @@ internal sealed class MonitorSession : IDisposable
         _description = monitor.Description;
         _adapter = monitor.Adapter;
         _brand = string.IsNullOrWhiteSpace(monitor.Brand) ? "Monitor" : monitor.Brand;
+        _model = monitor.Model?.Trim() ?? "";
     }
 
     public string DeviceId => _deviceId;
     public string Description => _description;
     public string Adapter => _adapter;
     public string Brand => _brand;
+    public string Model => _model;
+    public string Title => string.IsNullOrWhiteSpace(_model) ? _brand : $"{_brand}: {_model}";
     public string Capabilities => _capabilities;
     public IReadOnlyList<uint> CapabilityInputCodes => _codes;
 
@@ -65,6 +73,7 @@ internal sealed class MonitorSession : IDisposable
             {
                 _capabilities = text;
                 _codes = ParseInputCodes(text);
+                ApplyModelFromCapabilities();
                 reported = _codes;
                 capsKnown = _codes.Count > 0;
             }
@@ -195,6 +204,7 @@ internal sealed class MonitorSession : IDisposable
         _description = fresh._description;
         _adapter = fresh._adapter;
         _brand = fresh._brand;
+        _model = fresh._model;
         _capabilities = fresh._capabilities;
         _codes = fresh._codes;
         fresh._hasHandle = false;
@@ -234,6 +244,7 @@ internal sealed class MonitorSession : IDisposable
 
         _capabilities = buffer.ToString();
         _codes = ParseInputCodes(_capabilities);
+        ApplyModelFromCapabilities();
     }
 
     private static bool TryOpenCore(out MonitorSession? session, out string report, out string error)
@@ -251,6 +262,11 @@ internal sealed class MonitorSession : IDisposable
             lines.Append(monitor.Description);
             lines.Append(" | ");
             lines.Append(monitor.Brand);
+            if (!string.IsNullOrWhiteSpace(monitor.Model))
+            {
+                lines.Append(" ");
+                lines.Append(monitor.Model);
+            }
             lines.Append(monitor.IsAoc ? " | AOC" : "");
             lines.AppendLine();
         }
@@ -303,13 +319,15 @@ internal sealed class MonitorSession : IDisposable
         var (deviceId, deviceString) = LookupMonitorDevice(info.szDevice);
         if (!NativeMethods.GetNumberOfPhysicalMonitorsFromHMONITOR(hMonitor, out var count) || count == 0)
         {
+            var missing = DetectIdentity(deviceId, deviceString, "");
             list.Add(new FoundMonitor
             {
                 Adapter = info.szDevice ?? "",
                 DeviceId = deviceId,
                 DeviceString = deviceString,
                 Description = $"(DDC unavailable, Win32 {Marshal.GetLastWin32Error()})",
-                Brand = DetectBrand(deviceId, deviceString, ""),
+                Brand = missing.Brand,
+                Model = missing.Model,
                 IsAoc = IsAoc(deviceId, deviceString, ""),
             });
             return;
@@ -317,13 +335,15 @@ internal sealed class MonitorSession : IDisposable
 
         if (!TryReadPhysicalMonitors(hMonitor, count, out var physical, out var readError))
         {
+            var failed = DetectIdentity(deviceId, deviceString, "");
             list.Add(new FoundMonitor
             {
                 Adapter = info.szDevice ?? "",
                 DeviceId = deviceId,
                 DeviceString = deviceString,
                 Description = readError,
-                Brand = DetectBrand(deviceId, deviceString, ""),
+                Brand = failed.Brand,
+                Model = failed.Model,
                 IsAoc = IsAoc(deviceId, deviceString, ""),
             });
             return;
@@ -331,6 +351,7 @@ internal sealed class MonitorSession : IDisposable
 
         foreach (var monitor in physical)
         {
+            var identity = DetectIdentity(deviceId, deviceString, monitor.Description);
             list.Add(new FoundMonitor
             {
                 Physical = monitor.Handle,
@@ -339,7 +360,8 @@ internal sealed class MonitorSession : IDisposable
                 DeviceId = deviceId,
                 DeviceString = deviceString,
                 Description = monitor.Description,
-                Brand = DetectBrand(deviceId, deviceString, monitor.Description),
+                Brand = identity.Brand,
+                Model = identity.Model,
                 IsAoc = IsAoc(deviceId, deviceString, monitor.Description),
             });
         }
@@ -405,35 +427,51 @@ internal sealed class MonitorSession : IDisposable
                blob.Contains(@"MONITOR\AOC", StringComparison.Ordinal);
     }
 
-    internal static string DetectBrand(string deviceId, string deviceString, string description)
+    internal static (string Brand, string Model) DetectIdentity(string deviceId, string deviceString, string description)
     {
-        var wmi = TryWmiManufacturer(deviceId);
-        if (!string.IsNullOrWhiteSpace(wmi))
-            return wmi;
-
-        var match = Regex.Match(deviceId ?? "", @"(?:MONITOR\\|DISPLAY#)([A-Za-z]{3})", RegexOptions.IgnoreCase);
-        if (match.Success)
-            return match.Groups[1].Value.ToUpperInvariant();
-
-        foreach (var token in new[] { deviceString, description })
+        var (wmiBrand, wmiModel) = TryWmiIdentity(deviceId);
+        var brand = wmiBrand;
+        if (string.IsNullOrWhiteSpace(brand))
         {
-            if (string.IsNullOrWhiteSpace(token))
-                continue;
-            var word = token.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries)[0];
-            if (word.Length is >= 2 and <= 8 && word.All(char.IsLetter))
-                return word.ToUpperInvariant();
+            var match = Regex.Match(deviceId ?? "", @"(?:MONITOR\\|DISPLAY#)([A-Za-z]{3})", RegexOptions.IgnoreCase);
+            if (match.Success)
+                brand = match.Groups[1].Value.ToUpperInvariant();
         }
 
-        return "Monitor";
+        if (string.IsNullOrWhiteSpace(brand))
+        {
+            foreach (var token in new[] { deviceString, description })
+            {
+                if (string.IsNullOrWhiteSpace(token))
+                    continue;
+                var word = token.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries)[0];
+                if (word.Length is >= 2 and <= 8 && word.All(char.IsLetter))
+                {
+                    brand = word.ToUpperInvariant();
+                    break;
+                }
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(brand))
+            brand = "Monitor";
+
+        var model = wmiModel;
+        if (string.IsNullOrWhiteSpace(model) &&
+            !string.IsNullOrWhiteSpace(deviceString) &&
+            !deviceString.Equals("Generic PnP Monitor", StringComparison.OrdinalIgnoreCase))
+            model = deviceString.Trim();
+
+        return (brand, model);
     }
 
-    private static string? TryWmiManufacturer(string deviceId)
+    private static (string Brand, string Model) TryWmiIdentity(string deviceId)
     {
         try
         {
             using var searcher = new System.Management.ManagementObjectSearcher(
                 @"root\wmi",
-                "SELECT ManufacturerName, InstanceName FROM WmiMonitorID");
+                "SELECT ManufacturerName, UserFriendlyName, InstanceName FROM WmiMonitorID");
             foreach (var item in searcher.Get())
             {
                 using (item)
@@ -445,7 +483,7 @@ internal sealed class MonitorSession : IDisposable
                     if (MatchesPnp(deviceId, instance) ||
                         deviceId.Contains(@"MONITOR\" + name, StringComparison.OrdinalIgnoreCase) ||
                         deviceId.Contains("DISPLAY#" + name, StringComparison.OrdinalIgnoreCase))
-                        return name.ToUpperInvariant();
+                        return (name.ToUpperInvariant(), DecodeWmiName(item["UserFriendlyName"]));
                 }
             }
         }
@@ -456,7 +494,22 @@ internal sealed class MonitorSession : IDisposable
         {
         }
 
-        return null;
+        return ("", "");
+    }
+
+    private void ApplyModelFromCapabilities()
+    {
+        if (!string.IsNullOrWhiteSpace(_model))
+            return;
+        var parsed = ParseDdcModel(_capabilities);
+        if (!string.IsNullOrWhiteSpace(parsed))
+            _model = parsed;
+    }
+
+    internal static string ParseDdcModel(string capabilities)
+    {
+        var match = DdcModelPattern.Match(capabilities ?? "");
+        return match.Success ? match.Groups[1].Value.Trim() : "";
     }
 
     private static bool MatchesPnp(string deviceId, string instanceName)
