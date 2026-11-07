@@ -13,9 +13,8 @@ dotnet publish -c Release -o .\publish
 ```
 
 Default hotkeys follow input order: `Ctrl+Alt+1` … `Ctrl+Alt+N`. Change names
-and shortcuts from the tray menu **Inputs**. Close (X) minimizes the window
-to the taskbar; use **Exit** to quit. Right-click a port with no cable to
-dim it.
+and shortcuts from the tray menu **Inputs**. Close (X) hides the window to
+the tray; use **Exit** to quit. Right-click a port with no cable to dim it.
 
 Turn **DDC/CI** on in the monitor OSD. On NVIDIA GPUs the app talks to the
 monitor through NVAPI I2C when the Windows DDC API is silent.

@@ -142,8 +142,9 @@ internal sealed class SwitchForm : Form
         if (e.CloseReason == CloseReason.UserClosing && !_app.IsExiting)
         {
             e.Cancel = true;
-            ShowInTaskbar = true;
-            WindowState = FormWindowState.Minimized;
+            WindowState = FormWindowState.Normal;
+            ShowInTaskbar = false;
+            Hide();
             return;
         }
 
