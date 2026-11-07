@@ -13,6 +13,7 @@ internal sealed class FoundMonitor
     public string DeviceId { get; set; } = "";
     public string DeviceString { get; set; } = "";
     public string Description { get; set; } = "";
+    public string Brand { get; set; } = "Monitor";
     public bool IsAoc { get; set; }
 }
 
@@ -29,6 +30,7 @@ internal sealed class MonitorSession : IDisposable
     private string _deviceId = "";
     private string _description = "";
     private string _adapter = "";
+    private string _brand = "Monitor";
     private string _capabilities = "";
     private IReadOnlyList<uint> _codes = [];
 
@@ -39,11 +41,13 @@ internal sealed class MonitorSession : IDisposable
         _deviceId = monitor.DeviceId;
         _description = monitor.Description;
         _adapter = monitor.Adapter;
+        _brand = string.IsNullOrWhiteSpace(monitor.Brand) ? "Monitor" : monitor.Brand;
     }
 
     public string DeviceId => _deviceId;
     public string Description => _description;
     public string Adapter => _adapter;
+    public string Brand => _brand;
     public string Capabilities => _capabilities;
     public IReadOnlyList<uint> CapabilityInputCodes => _codes;
 
@@ -190,6 +194,7 @@ internal sealed class MonitorSession : IDisposable
         _deviceId = fresh._deviceId;
         _description = fresh._description;
         _adapter = fresh._adapter;
+        _brand = fresh._brand;
         _capabilities = fresh._capabilities;
         _codes = fresh._codes;
         fresh._hasHandle = false;
@@ -244,6 +249,8 @@ internal sealed class MonitorSession : IDisposable
             lines.Append(monitor.DeviceId);
             lines.Append(" | ");
             lines.Append(monitor.Description);
+            lines.Append(" | ");
+            lines.Append(monitor.Brand);
             lines.Append(monitor.IsAoc ? " | AOC" : "");
             lines.AppendLine();
         }
@@ -302,6 +309,7 @@ internal sealed class MonitorSession : IDisposable
                 DeviceId = deviceId,
                 DeviceString = deviceString,
                 Description = $"(DDC unavailable, Win32 {Marshal.GetLastWin32Error()})",
+                Brand = DetectBrand(deviceId, deviceString, ""),
                 IsAoc = IsAoc(deviceId, deviceString, ""),
             });
             return;
@@ -315,6 +323,7 @@ internal sealed class MonitorSession : IDisposable
                 DeviceId = deviceId,
                 DeviceString = deviceString,
                 Description = readError,
+                Brand = DetectBrand(deviceId, deviceString, ""),
                 IsAoc = IsAoc(deviceId, deviceString, ""),
             });
             return;
@@ -330,6 +339,7 @@ internal sealed class MonitorSession : IDisposable
                 DeviceId = deviceId,
                 DeviceString = deviceString,
                 Description = monitor.Description,
+                Brand = DetectBrand(deviceId, deviceString, monitor.Description),
                 IsAoc = IsAoc(deviceId, deviceString, monitor.Description),
             });
         }
@@ -393,6 +403,83 @@ internal sealed class MonitorSession : IDisposable
         return blob.Contains("AOCB306", StringComparison.Ordinal) ||
                blob.Contains("U34G3G3", StringComparison.Ordinal) ||
                blob.Contains(@"MONITOR\AOC", StringComparison.Ordinal);
+    }
+
+    internal static string DetectBrand(string deviceId, string deviceString, string description)
+    {
+        var wmi = TryWmiManufacturer(deviceId);
+        if (!string.IsNullOrWhiteSpace(wmi))
+            return wmi;
+
+        var match = Regex.Match(deviceId ?? "", @"(?:MONITOR\\|DISPLAY#)([A-Za-z]{3})", RegexOptions.IgnoreCase);
+        if (match.Success)
+            return match.Groups[1].Value.ToUpperInvariant();
+
+        foreach (var token in new[] { deviceString, description })
+        {
+            if (string.IsNullOrWhiteSpace(token))
+                continue;
+            var word = token.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries)[0];
+            if (word.Length is >= 2 and <= 8 && word.All(char.IsLetter))
+                return word.ToUpperInvariant();
+        }
+
+        return "Monitor";
+    }
+
+    private static string? TryWmiManufacturer(string deviceId)
+    {
+        try
+        {
+            using var searcher = new System.Management.ManagementObjectSearcher(
+                @"root\wmi",
+                "SELECT ManufacturerName, InstanceName FROM WmiMonitorID");
+            foreach (var item in searcher.Get())
+            {
+                using (item)
+                {
+                    var instance = item["InstanceName"] as string ?? "";
+                    var name = DecodeWmiName(item["ManufacturerName"]);
+                    if (string.IsNullOrWhiteSpace(name) || string.IsNullOrWhiteSpace(deviceId))
+                        continue;
+                    if (MatchesPnp(deviceId, instance) ||
+                        deviceId.Contains(@"MONITOR\" + name, StringComparison.OrdinalIgnoreCase) ||
+                        deviceId.Contains("DISPLAY#" + name, StringComparison.OrdinalIgnoreCase))
+                        return name.ToUpperInvariant();
+                }
+            }
+        }
+        catch (System.Management.ManagementException)
+        {
+        }
+        catch (System.Runtime.InteropServices.COMException)
+        {
+        }
+
+        return null;
+    }
+
+    private static bool MatchesPnp(string deviceId, string instanceName)
+    {
+        var device = Regex.Match(deviceId, @"MONITOR\\([^\\]+)", RegexOptions.IgnoreCase);
+        if (!device.Success)
+            return false;
+        return instanceName.Contains(device.Groups[1].Value, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string DecodeWmiName(object? value)
+    {
+        IEnumerable<int> codes = value switch
+        {
+            ushort[] unsigned => unsigned.Select(code => (int)code),
+            short[] signed => signed.Select(code => (int)code),
+            int[] integers => integers,
+            byte[] bytes => bytes.Select(code => (int)code),
+            string text => text.Select(code => (int)code),
+            _ => [],
+        };
+        var chars = codes.TakeWhile(code => code != 0).Select(code => (char)code).ToArray();
+        return new string(chars).Trim();
     }
 
     internal static IReadOnlyList<uint> ParseInputCodes(string capabilities)

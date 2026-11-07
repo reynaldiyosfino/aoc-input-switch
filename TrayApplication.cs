@@ -63,6 +63,7 @@ internal sealed class TrayApplication : ApplicationContext
     public bool IsExiting { get; private set; }
     public IReadOnlyList<InputSlot> Slots => _slots;
     public uint? CurrentCode => _current;
+    public string Brand => string.IsNullOrWhiteSpace(_monitor?.Brand) ? "Monitor" : _monitor!.Brand;
 
     public void RequestSwitch(InputSlot slot)
     {
@@ -148,16 +149,22 @@ internal sealed class TrayApplication : ApplicationContext
             if (!HotkeyForm.TryEdit(owner, _slots, out var chords))
                 return;
             _config.UpdateHotkeys(chords);
-            _slots = ApplyAvailability(_config.Resolve(_monitor?.CapabilityInputCodes ?? [], out var warning), _current, null, capsKnown: false);
-            if (warning is not null)
-                ShowToast(warning, error: true);
-            _switchForm?.RefreshSlots();
-            RefreshCurrent();
+            ReloadSlots();
         }
         finally
         {
             ApplyHotkeys();
         }
+    }
+
+    public void BeginRename()
+    {
+        var owner = EnsureSwitcherHiddenOwner();
+        if (!RenameForm.TryEdit(owner, _slots, out var labels))
+            return;
+        _config.UpdateLabels(labels);
+        ReloadSlots();
+        ApplyHotkeys();
     }
 
     public void ToggleStartup()
@@ -214,9 +221,12 @@ internal sealed class TrayApplication : ApplicationContext
                 if (generation != _generation)
                     return;
                 _current = live?.Current;
-                var previous = _slots.Select(slot => slot.Available).ToArray();
-                _slots = ApplyAvailability(_slots, _current, live?.Reported, live?.CapsKnown == true);
-                if (!previous.SequenceEqual(_slots.Select(slot => slot.Available)))
+                var previous = _slots.Select(slot => (slot.Id, slot.Available)).ToArray();
+                var source = live is { CapsKnown: true } known
+                    ? _config.Resolve(known.Reported, out _)
+                    : _slots;
+                _slots = ApplyAvailability(source, _current, live?.Reported, live?.CapsKnown == true);
+                if (!previous.SequenceEqual(_slots.Select(slot => (slot.Id, slot.Available))))
                     ApplyHotkeys();
                 UpdateVisuals();
             });
@@ -281,6 +291,10 @@ internal sealed class TrayApplication : ApplicationContext
         edit.Click += (_, _) => BeginHotkeyEdit();
         menu.Items.Add(edit);
 
+        var rename = new ToolStripMenuItem("Rename inputs");
+        rename.Click += (_, _) => BeginRename();
+        menu.Items.Add(rename);
+
         var startup = new ToolStripMenuItem("Run at Windows startup")
         {
             Checked = _config.StartWithWindows,
@@ -310,8 +324,21 @@ internal sealed class TrayApplication : ApplicationContext
 
     private void UnregisterHotkeys()
     {
-        for (var i = 1; i <= 4; i++)
+        for (var i = 1; i <= Math.Max(16, _slots.Count); i++)
             _hotkeys.Unregister(i);
+    }
+
+    private void ReloadSlots()
+    {
+        _slots = ApplyAvailability(
+            _config.Resolve(_monitor?.CapabilityInputCodes ?? [], out var warning),
+            _current,
+            null,
+            capsKnown: false);
+        if (warning is not null)
+            ShowToast(warning, error: true);
+        _switchForm?.RefreshSlots();
+        RefreshCurrent();
     }
 
     private void UpdateVisuals()

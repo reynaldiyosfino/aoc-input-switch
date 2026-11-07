@@ -74,26 +74,25 @@ internal sealed class AppConfig
     public IReadOnlyList<InputSlot> Resolve(IReadOnlyList<uint> capabilityCodes, out string? warning)
     {
         var warnings = new List<string>();
-        var slots = new List<InputSlot>(Defaults.Length);
-        foreach (var input in Inputs)
+        var template = capabilityCodes.Count > 0
+            ? capabilityCodes.Select(SlotFromCode).ToList()
+            : Defaults.Select(item => (item.Id, item.Label, item.Vcp)).ToList();
+
+        var slots = new List<InputSlot>(template.Count);
+        for (var i = 0; i < template.Count; i++)
         {
-            var fallback = DefaultHotkey(input.Id);
-            if (!HotkeyChord.TryParse(input.Hotkey, out var chord))
+            var item = template[i];
+            var existing = FindExisting(item.Id, item.Vcp);
+            var fallback = DefaultHotkeyForIndex(i);
+            var hotkeyText = string.IsNullOrWhiteSpace(existing?.Hotkey) ? fallback : existing!.Hotkey;
+            if (!HotkeyChord.TryParse(hotkeyText, out var chord))
             {
                 HotkeyChord.TryParse(fallback, out chord);
-                warnings.Add($"Hotkey {input.Label} is invalid, using default {fallback}.");
+                warnings.Add($"Hotkey {item.Label} is invalid, using default {fallback}.");
             }
 
-            var vcp = input.Vcp is int explicitCode ? (uint)explicitCode : DefaultVcp(input.Id);
-            slots.Add(new InputSlot(input.Id, input.Label, vcp, chord));
-        }
-
-        var explicitOverride = Inputs.Any(input => input.Vcp is not null);
-        var known = slots.Select(slot => slot.Vcp).ToHashSet();
-        if (!explicitOverride && capabilityCodes.Count >= 4 && capabilityCodes.All(code => !known.Contains(code)))
-        {
-            for (var i = 0; i < 4; i++)
-                slots[i] = slots[i] with { Vcp = capabilityCodes[i] };
+            var label = string.IsNullOrWhiteSpace(existing?.Label) ? item.Label : existing!.Label.Trim();
+            slots.Add(new InputSlot(item.Id, label, item.Vcp, chord));
         }
 
         var seen = new HashSet<HotkeyChord>();
@@ -103,6 +102,7 @@ internal sealed class AppConfig
                 warnings.Add($"Hotkey {slot.Label} conflicts with another input ({slot.Hotkey.Format()}).");
         }
 
+        SyncInputs(slots);
         warning = warnings.Count == 0 ? null : string.Join(" ", warnings);
         var dead = UnpluggedIds.ToHashSet(StringComparer.OrdinalIgnoreCase);
         return slots.Select(slot => slot with { Available = !dead.Contains(slot.Id) }).ToList();
@@ -123,6 +123,18 @@ internal sealed class AppConfig
         Save();
     }
 
+    public void UpdateLabels(IReadOnlyList<string> labels)
+    {
+        for (var i = 0; i < Inputs.Count && i < labels.Count; i++)
+        {
+            var text = labels[i].Trim();
+            var vcp = Inputs[i].Vcp is int code ? (uint)code : DefaultVcp(Inputs[i].Id);
+            Inputs[i].Label = text.Length == 0 ? MonitorSession.Describe(vcp) : text;
+        }
+
+        Save();
+    }
+
     public static uint DefaultVcp(string id)
     {
         foreach (var item in Defaults)
@@ -134,15 +146,59 @@ internal sealed class AppConfig
         return 0;
     }
 
-    private static string DefaultHotkey(string id)
+    private InputConfig? FindExisting(string id, uint vcp)
     {
-        foreach (var item in Defaults)
+        return Inputs.FirstOrDefault(input => input.Id.Equals(id, StringComparison.OrdinalIgnoreCase))
+            ?? Inputs.FirstOrDefault(input => input.Vcp is int code && (uint)code == vcp);
+    }
+
+    private void SyncInputs(IReadOnlyList<InputSlot> slots)
+    {
+        var next = slots.Select(slot => new InputConfig
         {
-            if (item.Id == id)
-                return item.Hotkey;
+            Id = slot.Id,
+            Label = slot.Label,
+            Hotkey = slot.Hotkey.Format(),
+            Vcp = (int)slot.Vcp,
+        }).ToList();
+        if (SameInputs(Inputs, next))
+            return;
+        Inputs = next;
+        Save();
+    }
+
+    private static bool SameInputs(List<InputConfig> left, List<InputConfig> right)
+    {
+        if (left.Count != right.Count)
+            return false;
+        for (var i = 0; i < left.Count; i++)
+        {
+            if (!left[i].Id.Equals(right[i].Id, StringComparison.OrdinalIgnoreCase))
+                return false;
+            if (left[i].Vcp != right[i].Vcp)
+                return false;
+            if (!string.Equals(left[i].Label, right[i].Label, StringComparison.Ordinal))
+                return false;
+            if (!string.Equals(left[i].Hotkey, right[i].Hotkey, StringComparison.OrdinalIgnoreCase))
+                return false;
         }
 
-        return "Ctrl+Alt+1";
+        return true;
+    }
+
+    private static (string Id, string Label, uint Vcp) SlotFromCode(uint code)
+    {
+        var label = MonitorSession.Describe(code);
+        return (label.ToLowerInvariant(), label, code);
+    }
+
+    private static string DefaultHotkeyForIndex(int index)
+    {
+        if (index < 9)
+            return $"Ctrl+Alt+{index + 1}";
+        if (index == 9)
+            return "Ctrl+Alt+0";
+        return $"Ctrl+Alt+F{index - 9}";
     }
 
     private static AppConfig CreateDefault()
@@ -157,16 +213,32 @@ internal sealed class AppConfig
     private static List<InputConfig> Normalize(List<InputConfig>? source)
     {
         source ??= [];
-        return Defaults.Select(item =>
+        if (source.Count == 0)
         {
-            var existing = source.FirstOrDefault(input => input.Id.Equals(item.Id, StringComparison.OrdinalIgnoreCase));
-            return new InputConfig
+            return Defaults.Select(item => new InputConfig
             {
                 Id = item.Id,
-                Label = string.IsNullOrWhiteSpace(existing?.Label) ? item.Label : existing!.Label,
-                Hotkey = string.IsNullOrWhiteSpace(existing?.Hotkey) ? item.Hotkey : existing!.Hotkey,
-                Vcp = existing?.Vcp,
-            };
-        }).ToList();
+                Label = item.Label,
+                Hotkey = item.Hotkey,
+                Vcp = (int)item.Vcp,
+            }).ToList();
+        }
+
+        return source
+            .Where(input => !string.IsNullOrWhiteSpace(input.Id))
+            .Select(input =>
+            {
+                var id = input.Id.Trim();
+                var vcp = input.Vcp is int code ? (uint)code : DefaultVcp(id);
+                var fallbackLabel = vcp == 0 ? id.ToUpperInvariant() : MonitorSession.Describe(vcp);
+                return new InputConfig
+                {
+                    Id = id,
+                    Label = string.IsNullOrWhiteSpace(input.Label) ? fallbackLabel : input.Label.Trim(),
+                    Hotkey = string.IsNullOrWhiteSpace(input.Hotkey) ? "Ctrl+Alt+1" : input.Hotkey.Trim(),
+                    Vcp = (int)vcp,
+                };
+            })
+            .ToList();
     }
 }

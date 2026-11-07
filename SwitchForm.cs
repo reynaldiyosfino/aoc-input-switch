@@ -3,12 +3,15 @@ namespace AocInputSwitch;
 internal sealed class SwitchForm : Form
 {
     private readonly TrayApplication _app;
-    private readonly SlotButton[] _buttons;
+    private readonly Label _title;
+    private readonly TableLayoutPanel _grid;
+    private readonly List<SlotButton> _buttons = [];
+    private int _layoutCount = -1;
 
     public SwitchForm(TrayApplication app)
     {
         _app = app;
-        Text = "AOC Input";
+        Text = app.Brand;
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;
         MinimizeBox = true;
@@ -19,33 +22,88 @@ internal sealed class SwitchForm : Form
         Font = Theme.Body;
         Icon = AppImages.Icon;
 
-        var title = new Label
+        _title = new Label
         {
-            Text = "AOC Input",
-            Dock = DockStyle.Top,
-            Height = 48,
-            TextAlign = ContentAlignment.MiddleLeft,
+            Text = app.Brand,
+            Dock = DockStyle.Fill,
+            TextAlign = ContentAlignment.MiddleCenter,
             Font = Theme.Title,
             ForeColor = Theme.Text,
             BackColor = Theme.Back,
-            Padding = new Padding(8, 0, 0, 0),
+            Padding = new Padding(8, 0, 8, 0),
         };
 
-        var grid = new TableLayoutPanel
+        _grid = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
-            ColumnCount = 2,
-            RowCount = 2,
             Padding = new Padding(8),
             BackColor = Theme.Back,
         };
-        grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
-        grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
-        grid.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
-        grid.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
 
-        _buttons = new SlotButton[4];
-        for (var i = 0; i < _buttons.Length; i++)
+        var root = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 1,
+            RowCount = 2,
+            BackColor = Theme.Back,
+        };
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
+        root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        root.Controls.Add(_title, 0, 0);
+        root.Controls.Add(_grid, 0, 1);
+        Controls.Add(root);
+        RebuildGrid(Math.Max(1, app.Slots.Count));
+    }
+
+    public void SetBrand(string brand)
+    {
+        var text = string.IsNullOrWhiteSpace(brand) ? "Monitor" : brand;
+        _title.Text = text;
+        Text = text;
+    }
+
+    public void RefreshSlots()
+    {
+        SetBrand(_app.Brand);
+        var slots = _app.Slots;
+        if (slots.Count != _layoutCount)
+            RebuildGrid(Math.Max(1, slots.Count));
+
+        var current = _app.CurrentCode;
+        for (var i = 0; i < _buttons.Count; i++)
+        {
+            if (i >= slots.Count)
+            {
+                _buttons[i].Visible = false;
+                _buttons[i].Bind(null, false, false);
+                continue;
+            }
+
+            _buttons[i].Visible = true;
+            _buttons[i].Bind(slots[i], current == slots[i].Vcp, slots[i].Available);
+        }
+    }
+
+    private void RebuildGrid(int count)
+    {
+        _grid.SuspendLayout();
+        _grid.Controls.Clear();
+        _grid.ColumnStyles.Clear();
+        _grid.RowStyles.Clear();
+        _buttons.Clear();
+        _layoutCount = count;
+
+        var columns = count <= 1 ? 1 : 2;
+        var rows = count <= 2 ? 1 : (int)Math.Ceiling(count / 2.0);
+        _grid.ColumnCount = columns;
+        _grid.RowCount = rows;
+        for (var column = 0; column < columns; column++)
+            _grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100f / columns));
+        for (var row = 0; row < rows; row++)
+            _grid.RowStyles.Add(new RowStyle(SizeType.Percent, 100f / rows));
+
+        var cells = columns * rows;
+        for (var i = 0; i < cells; i++)
         {
             var button = new SlotButton();
             var index = i;
@@ -61,39 +119,14 @@ internal sealed class SwitchForm : Form
                 if (index < slots.Count)
                     _app.ToggleUnplugged(slots[index]);
             };
-            _buttons[i] = button;
-            grid.Controls.Add(button, i % 2, i / 2);
+            _buttons.Add(button);
+            button.Visible = i < count;
+            _grid.Controls.Add(button, i % columns, i / columns);
         }
 
-        title.Dock = DockStyle.Fill;
-        var root = new TableLayoutPanel
-        {
-            Dock = DockStyle.Fill,
-            ColumnCount = 1,
-            RowCount = 2,
-            BackColor = Theme.Back,
-        };
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 48));
-        root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        root.Controls.Add(title, 0, 0);
-        root.Controls.Add(grid, 0, 1);
-        Controls.Add(root);
-    }
-
-    public void RefreshSlots()
-    {
-        var slots = _app.Slots;
-        var current = _app.CurrentCode;
-        for (var i = 0; i < _buttons.Length; i++)
-        {
-            if (i >= slots.Count)
-            {
-                _buttons[i].Bind(null, false, false);
-                continue;
-            }
-
-            _buttons[i].Bind(slots[i], current == slots[i].Vcp, slots[i].Available);
-        }
+        var height = 48 + (rows * 146);
+        ClientSize = new Size(columns == 1 ? 280 : 520, Math.Max(196, height));
+        _grid.ResumeLayout();
     }
 
     protected override void OnVisibleChanged(EventArgs e)
