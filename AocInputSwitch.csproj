@@ -13,8 +13,12 @@
     <Version>1.0.0</Version>
     <Description>Ganti input AOC U34G3G3R3 lewat DDC/CI.</Description>
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <ApplicationIcon>Assets\app.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="System.Management" Version="10.0.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="Assets\app.ico" LogicalName="app.ico" />
   </ItemGroup>
 </Project>

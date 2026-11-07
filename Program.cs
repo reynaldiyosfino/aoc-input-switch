@@ -15,6 +15,8 @@ internal static class Program
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
 
+        if (HasArg(args, "--make-icon"))
+            return IconMaker.WriteAssets();
         if (HasArg(args, "--probe"))
             return Probe();
         if (HasArg(args, "--cycle"))

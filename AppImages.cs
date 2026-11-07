@@ -1,30 +1,25 @@
-using System.Drawing.Drawing2D;
+using System.Reflection;
 
 namespace AocInputSwitch;
 
 internal static class AppImages
 {
-    public static Icon Icon { get; } = CreateIcon();
+    public static Icon Icon { get; } = LoadIcon();
 
-    private static Icon CreateIcon()
+    private static Icon LoadIcon()
     {
-        using var bitmap = new Bitmap(32, 32, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
-        using (var graphics = Graphics.FromImage(bitmap))
+        var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("app.ico");
+        if (stream is not null)
+            return new Icon(stream);
+
+        var path = Environment.ProcessPath;
+        if (!string.IsNullOrWhiteSpace(path))
         {
-            graphics.SmoothingMode = SmoothingMode.AntiAlias;
-            graphics.Clear(Color.Transparent);
-            using var brush = new SolidBrush(Theme.Active);
-            graphics.FillEllipse(brush, 1, 1, 30, 30);
-            using var font = new Font("Segoe UI", 14, FontStyle.Bold, GraphicsUnit.Pixel);
-            using var text = new SolidBrush(Color.White);
-            using var format = new StringFormat
-            {
-                Alignment = StringAlignment.Center,
-                LineAlignment = StringAlignment.Center,
-            };
-            graphics.DrawString("A", font, text, new RectangleF(0, 1, 32, 32), format);
+            var extracted = Icon.ExtractAssociatedIcon(path);
+            if (extracted is not null)
+                return extracted;
         }
 
-        return Icon.FromHandle(bitmap.GetHicon());
+        return SystemIcons.Application;
     }
 }
